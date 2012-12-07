@@ -54,6 +54,12 @@ static struct sigma_action *sigma_action_alloc(size_t payload_size,
 {
 	struct sigma_action *action;
 
+	/* Needs at least one byte of data */
+	if (payload_size < 3) {
+		*action_size = 0;
+		return NULL;
+	}
+
 	*action_size = sizeof(*action) + ROUND_UP(payload_size, sizeof(uint16_t));
 
 	action = malloc(*action_size);
