@@ -4,6 +4,7 @@ import struct
 import xml.etree.ElementTree as ET
 
 import sys
+
  
 crc32_tab = [
 	0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f,
@@ -58,70 +59,107 @@ def crc32(buf, crc = 0):
 
 	return crc
 
-def create_padding(x):
-	print(((x + 3) & ~3) - x)
-	for i in range(0, ((x + 3) & ~3) - x):
-		write(b"\xaa")
+class SigmadDSPFirmwareGen(object):
 
-crcsum = 0
+	CHUNK_TYPE_DATA = 0
+	CHUNK_TYPE_CONTROL = 1
+	CHUNK_TYPE_SAMPLERATES = 2
 
-def write(data):
-	global crcsum
-	out.write(data)
-	crcsum = crc32(data, crcsum)
+	CHUNK_HEADER_SIZE = 12
+	CHUNK_DATA_HEADER_SIZE = CHUNK_HEADER_SIZE + 2
+	CHUNK_CONTROL_HEADER_SIZE = CHUNK_HEADER_SIZE + 6
 
-def write_data(out, node):
-	addr = int(node.find("Address").text)
-	size = int(node.find("Size").text)
+	def __init__(self, in_files, out_file):
+		self.crcsum = 0
+		self.size = 12
+		self.out = open(out_file, "wb")
 
-	data = node.find("Data").text
-	data = bytes([int(x.strip(), 16) for x in data.split(",") if x.strip()])
+		self.out.write(b"ADISIGM")
+		self.out.write(struct.pack("<BI", 2, 0x0000)) # checksum, will be overwritten latter
 
-	write(struct.pack("<IIIH", 14 + size, 0, 0, addr))
-	write(data)	
+		samplerates = []
+		samplerate_mask = 1
 
-	create_padding(14 + size)
+		for in_file, samplerate in in_files:
+			samplerates.append(samplerate)
+			self.parse_input_file(in_file, samplerate_mask)
+			samplerate_mask <<= 1
+
+		self.write_samplerates_chunk(samplerates)
+
+		self.out.seek(8)
+		self.out.write(struct.pack('<I', self.crcsum))
+		self.out.close()
+
+	def parse_input_file(self, filename, samplerate_mask):
+		tree = ET.parse(filename)
+	
+		for child in tree.getroot().iter("Program"):
+			name = child.find("Name").text
+			if name != "Program Data":
+				continue
+			self.write_data_chunk(child, samplerate_mask)
+
+		for child in tree.getroot().iter("Register"):
+			name = child.find("Name").text
+			if name != "Param":
+				continue
+			self.write_data_chunk(child, samplerate_mask)
+
+		for child in tree.getroot().iter("Module"):
+			name = child.find("CellName").text
+			for para in child.iter("ModuleParameter"):
+				self.write_control_chunk(para, name, samplerate_mask)
+
+	def write(self, data):
+		self.out.write(data)
+		self.crcsum = crc32(data, self.crcsum)
+		self.size += len(data)
+
+	def write_chunk_header(self, size, type, samplerate_mask):
+		# The start of a chunk is 4bytes aligned
+		padding = (self.size + 3) & ~3 - self.size
+		for i in range(0, padding):
+			self.write(b"\xaa")
+		self.write(struct.pack("<III", size, type, samplerate_mask))
+
+	def write_data_chunk(self, node, samplerate_mask):
+		addr = int(node.find("Address").text)
+		size = int(node.find("Size").text)
+
+		data = node.find("Data").text
+		data = bytes([int(x.strip(), 16) for x in data.split(",") if x.strip()])
+
+		size += self.CHUNK_DATA_HEADER_SIZE
+
+		self.write_chunk_header(size, self.CHUNK_TYPE_DATA, samplerate_mask)
+		self.write(struct.pack("<H", addr))
+		self.write(data)	
+
+	def write_control_chunk(self, node, name, samplerate_mask):
+		pname = node.find("Name").text
+		addr = int(node.find("Address").text)
+		length = int(node.find("Size").text)
+		name_len = len("%s %s" % (name, pname))
+
+		size = self.CHUNK_CONTROL_HEADER_SIZE + name_len
+
+		self.write_chunk_header(size, self.CHUNK_TYPE_CONTROL, samplerate_mask)
+		self.write(struct.pack("<HHH", 0, addr, length))
+		self.write(bytearray("%s %s" % (name, pname), "ascii"))
+
+	def write_samplerates_chunk(self, samplerates):
+		size = self.CHUNK_HEADER_SIZE + len(samplerates) * 4
+		self.write_chunk_header(size, self.CHUNK_TYPE_SAMPLERATES, 0)
+		for samplerate in samplerates:
+			self.write(struct.pack("<I", samplerate))
 
 if __name__ == "__main__":
-	if len(sys.argv) < 2:
+	if len(sys.argv) % 2 != 0 or len(sys.argv) < 4:
 		sys.exit(1)
 
-	out = open("out.bin", "wb")
+	in_files = []
+	for i in range(1, len(sys.argv) - 2, 2):
+		in_files.append((sys.argv[i], int(sys.argv[i+1])))
 
-	out.write(b"ADISIGM")
-	out.write(struct.pack("<BI", 2, 0x1235))
-
-	try:
-		tree = ET.parse(sys.argv[1])
-	except (Exception, e):
-		sys.stderr.write("Could not open %s: %s\n" % (sys.argv[1], str(e)))
-		sys.exit(1)
-
-	for child in tree.getroot().iter("Program"):
-		name = child.find("Name").text
-		if name != "Program Data":
-			continue
-		write_data(out, child)
-
-	for child in tree.getroot().iter("Register"):
-		name = child.find("Name").text
-		if name != "Param":
-			continue
-		write_data(out, child)
-
-	for child in tree.getroot().iter("Module"):
-		name = child.find("CellName").text
-		for para in child.iter("ModuleParameter"):
-			pname = para.find("Name").text
-			addr = int(para.find("Address").text)
-			size = int(para.find("Size").text)
-			name_len = len("%s %s" % (name, pname))
-			write(struct.pack("<IIIHHH", 18 + name_len, 1, 0, 0, addr, size))
-			write(bytearray("%s %s" % (name, pname), "ascii"))
-
-			create_padding(18 + name_len)
-
-	print('%x' % crcsum)
-	out.seek(8)
-	out.write(struct.pack('<I', crcsum))
-	out.close()
+	SigmadDSPFirmwareGen(in_files, sys.argv[-1])
