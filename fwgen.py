@@ -118,7 +118,7 @@ class SigmadDSPFirmwareGen(object):
 
 	def write_chunk_header(self, size, type, samplerate_mask):
 		# The start of a chunk is 4bytes aligned
-		padding = (self.size + 3) & ~3 - self.size
+		padding = ((self.size + 3) & ~3) - self.size
 		for i in range(0, padding):
 			self.write(b"\xaa")
 		self.write(struct.pack("<III", size, type, samplerate_mask))
