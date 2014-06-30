@@ -105,6 +105,7 @@ class SigmadDSPFirmwareGen(object):
 
 if __name__ == "__main__":
 	if len(sys.argv) % 2 != 0 or len(sys.argv) < 4:
+		print("Usage {0}: <xml file> <samplerate> [<xml file> <samplerate>] <output file>".format(sys.argv[0]))
 		sys.exit(1)
 
 	in_files = []
