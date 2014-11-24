@@ -19,20 +19,36 @@ class SigmadDSPFirmwareGen(object):
 	def __init__(self, in_files, out_file):
 		self.crcsum = 0xffffffff
 		self.size = 12
-		self.out = open(out_file, "wb")
 
-		self.out.write(b"ADISIGM")
-		self.out.write(struct.pack("<BI", 2, 0x0000)) # checksum, will be overwritten latter
+		self.data_chunks = []
+		self.control_chunks = []
+		self.control_names = []
 
 		samplerates = []
 		samplerate_mask = 1
 
 		for in_file, samplerate in in_files:
 			samplerates.append(samplerate)
-			self.parse_input_file(in_file, samplerate_mask)
+			self.parse_input_file(in_file, samplerate_mask, samplerate)
 			samplerate_mask <<= 1
 
+		ok = True
+		for chunk in self.control_chunks:
+			ok = ok & self.validate_control_chunk(chunk)
+
+		if not ok:
+			return
+
+		self.out = open(out_file, "wb")
+
+		self.out.write(b"ADISIGM")
+		self.out.write(struct.pack("<BI", 2, 0x0000)) # checksum, will be overwritten latter
+
 		self.write_samplerates_chunk(samplerates)
+		for chunk in self.data_chunks:
+			self.write_data_chunk(chunk)
+		for chunk in self.control_chunks:
+			self.write_control_chunk(chunk)
 
 		self.out.seek(8)
 		# binascii.crc32() inverts the bits interally here we intert it back
@@ -40,25 +56,25 @@ class SigmadDSPFirmwareGen(object):
 		self.out.write(struct.pack('<I', self.crcsum))
 		self.out.close()
 
-	def parse_input_file(self, filename, samplerate_mask):
+	def parse_input_file(self, filename, samplerate_mask, samplerate):
 		tree = ET.parse(filename)
 	
 		for child in tree.getroot().iter("Program"):
 			name = child.find("Name").text
 			if name != "Program Data":
 				continue
-			self.write_data_chunk(child, samplerate_mask)
+			self.add_data_chunk(child, samplerate_mask)
 
 		for child in tree.getroot().iter("Register"):
 			name = child.find("Name").text
 			if name != "Param":
 				continue
-			self.write_data_chunk(child, samplerate_mask)
+			self.add_data_chunk(child, samplerate_mask)
 
 		for child in tree.getroot().iter("Module"):
 			name = child.find("CellName").text
 			for para in child.iter("ModuleParameter"):
-				self.write_control_chunk(para, name, samplerate_mask)
+				self.add_control_chunk(para, name, samplerate_mask)
 
 	def write(self, data):
 		self.out.write(data)
@@ -72,12 +88,17 @@ class SigmadDSPFirmwareGen(object):
 			self.write(b"\xaa")
 		self.write(struct.pack("<III", size, type, samplerate_mask))
 
-	def write_data_chunk(self, node, samplerate_mask):
+	def add_data_chunk(self, node, samplerate_mask):
 		addr = int(node.find("Address").text)
 		size = int(node.find("Size").text)
 
 		data = node.find("Data").text
 		data = bytes([int(x.strip(), 16) for x in data.split(",") if x.strip()])
+
+		self.data_chunks.append((addr, size, data, samplerate_mask))
+
+	def write_data_chunk(self, data_chunk):
+		addr, size, data, samplerate_mask = data_chunk
 
 		size += self.CHUNK_DATA_HEADER_SIZE
 
@@ -85,12 +106,34 @@ class SigmadDSPFirmwareGen(object):
 		self.write(struct.pack("<H", addr))
 		self.write(data)	
 
-	def write_control_chunk(self, node, name, samplerate_mask):
+	def add_control_chunk(self, node, name, samplerate_mask):
 		pname = node.find("Name").text
 		addr = int(node.find("Address").text)
 		length = int(node.find("Size").text)
-		name_len = len("%s %s" % (name, pname))
 
+		self.control_chunks.append((name, pname, addr, length, samplerate_mask))
+
+	def validate_control_chunk(self, control_chunk):
+		name, pname, addr, length, samplerate_mask = control_chunk
+		ok = True
+
+		full_name = "%s %s" % (name, pname)
+		if len(full_name) > 43:
+			print("ERROR: Control name '%s' is to long. Maximum length is 43 characters" % full_name)
+			ok = False
+
+		if full_name in self.control_names:
+			print("ERROR: Duplicated control name '%s'" % full_name)
+			ok = False
+		else:
+			self.control_names.append(full_name)
+
+		return ok
+
+	def write_control_chunk(self, control_chunk):
+		name, pname, addr, length, samplerate_mask = control_chunk
+
+		name_len = len("%s %s" % (name, pname))
 		size = self.CHUNK_CONTROL_HEADER_SIZE + name_len
 
 		self.write_chunk_header(size, self.CHUNK_TYPE_CONTROL, samplerate_mask)
