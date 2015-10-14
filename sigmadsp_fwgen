@@ -35,6 +35,7 @@ class SigmadDSPFirmwareGen(object):
 		ok = True
 		for chunk in self.control_chunks:
 			ok = ok & self.validate_control_chunk(chunk)
+		ok |= self.merge_control_chunks()
 
 		if not ok:
 			return
@@ -122,11 +123,33 @@ class SigmadDSPFirmwareGen(object):
 			print("ERROR: Control name '%s' is to long. Maximum length is 43 characters" % full_name)
 			ok = False
 
-		if full_name in self.control_names:
+		if (full_name, samplerate_mask) in self.control_names:
 			print("ERROR: Duplicated control name '%s'" % full_name)
 			ok = False
 		else:
-			self.control_names.append(full_name)
+			self.control_names.append((full_name, samplerate_mask))
+
+		return ok
+
+	def merge_control_chunks(self):
+		new_chunks = {}
+		ok = True
+
+		for chunk in self.control_chunks:
+			name, pname, addr, length, samplerate_mask = chunk
+			full_name = "%s %s" % (name, pname)
+			if full_name in new_chunks.keys():
+				other_addr, other_length = new_chunks[full_name][2:4]
+				if other_addr != addr or other_length != length:
+					print("ERROR: Controls with the same name for different samplerates need the same address and length. Mismatch for control {} ({}, {}) != ({}, {})".format(
+						full_name, other_addr, other_length, addr, length))
+					ok = False
+
+				new_chunks[full_name][4] |= samplerate_mask
+			else:
+				new_chunks[full_name] = [name, pname, addr, length, samplerate_mask]
+
+		self.control_chunks = [tuple(x) for x in new_chunks.values()]
 
 		return ok
 
