@@ -22,7 +22,7 @@ class SigmadDSPFirmwareGen(object):
 
 		self.data_chunks = []
 		self.control_chunks = []
-		self.control_names = []
+		self.controls = {}
 
 		samplerates = []
 		samplerate_mask = 1
@@ -123,11 +123,17 @@ class SigmadDSPFirmwareGen(object):
 			print("ERROR: Control name '%s' is to long. Maximum length is 43 characters" % full_name)
 			ok = False
 
-		if (full_name, samplerate_mask) in self.control_names:
-			print("ERROR: Duplicated control name '%s'" % full_name)
-			ok = False
+		key = (full_name, samplerate_mask)
+
+		if key in self.controls:
+			# SigmaStudio sometimes generates multiple controls that are 100%
+			# identical, only generate an error if there are multiple controls
+			# with the same name, but having different addresses or lengths
+			if self.controls[key] != control_chunk:
+				print("ERROR: Duplicated control name '%s'" % full_name)
+				ok = False
 		else:
-			self.control_names.append((full_name, samplerate_mask))
+			self.controls[key] = control_chunk
 
 		return ok
 
