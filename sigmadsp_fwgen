@@ -145,8 +145,9 @@ class SigmadDSPFirmwareGen(object):
 			name, pname, addr, length, samplerate_mask = chunk
 			full_name = "%s %s" % (name, pname)
 			if full_name in new_chunks.keys():
-				other_addr, other_length = new_chunks[full_name][2:4]
-				if other_addr != addr or other_length != length:
+				other_addr, other_length, other_samplerate_mask = new_chunks[full_name][2:5]
+				if (other_addr != addr or other_length != length) and \
+				   (samplerate_mask & other_samplerate_mask) == 0:
 					print("ERROR: Controls with the same name for different samplerates need the same address and length. Mismatch for control {} ({}, {}) != ({}, {})".format(
 						full_name, other_addr, other_length, addr, length))
 					ok = False
