@@ -68,6 +68,9 @@ class SigmadDSPFirmwareGen(object):
 
 		for child in tree.getroot().iter("Register"):
 			name = child.find("Name").text
+			if name == "Non Modulo RAM":
+				print("WARNING: Non modulo RAM currently not supported. Design might not work correctly.")
+				continue
 			if name != "Param":
 				continue
 			self.add_data_chunk(child, samplerate_mask)
