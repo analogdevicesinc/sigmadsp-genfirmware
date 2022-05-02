@@ -93,7 +93,7 @@ class SigmadDSPFirmwareGen(object):
 		self.write(struct.pack("<III", size, type, samplerate_mask))
 
 	def add_data_chunk(self, node, samplerate_mask):
-		addr = int(node.find("Address").text)
+		addr = int(node.find("Address").text, 0)
 		size = int(node.find("Size").text)
 
 		data = node.find("Data").text
@@ -112,7 +112,7 @@ class SigmadDSPFirmwareGen(object):
 
 	def add_control_chunk(self, node, name, samplerate_mask):
 		pname = node.find("Name").text
-		addr = int(node.find("Address").text)
+		addr = int(node.find("Address").text, 0)
 		length = int(node.find("Size").text)
 
 		self.control_chunks.append((name, pname, addr, length, samplerate_mask))
